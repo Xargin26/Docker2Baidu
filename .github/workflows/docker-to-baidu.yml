@@ -14,7 +14,7 @@ jobs:
         env:
           BAIDU_BDUSS: ${{ secrets.BAIDU_BDUSS }}
           BAIDU_STOKEN: ${{ secrets.BAIDU_STOKEN }}
-          PCS_VER: v3.9.7
+          PCS_VER: v4.0.3
           PCS_DIR: /tmp/pcs
           BAIDU_REMOTE_ROOT: /GitHub-Docker-Backup
           GITHUB_WORKSPACE: ${{ github.workspace }}
@@ -57,7 +57,7 @@ jobs:
             if docker pull "$img"; then
               docker save "$img" | gzip > "$TMP_FILE"
               echo "打包完成，开始上传 $TMP_FILE"
-              BaiduPCS-Go upload --no-check "$TMP_FILE" ${BAIDU_REMOTE_ROOT}/
+              BaiduPCS-Go upload "$TMP_FILE" ${BAIDU_REMOTE_ROOT}/
               rm -f "$TMP_FILE"
               docker rmi "$img" || true
               echo "$img 上传成功"
