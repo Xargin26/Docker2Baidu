@@ -57,7 +57,7 @@ jobs:
             if docker pull "$img"; then
               docker save "$img" | gzip > "$TMP_FILE"
               echo "打包完成，开始上传 $TMP_FILE"
-              BaiduPCS-Go upload "$TMP_FILE" ${BAIDU_REMOTE_ROOT}/
+              BaiduPCS-Go upload --no-check "$TMP_FILE" ${BAIDU_REMOTE_ROOT}/
               rm -f "$TMP_FILE"
               docker rmi "$img" || true
               echo "$img 上传成功"
