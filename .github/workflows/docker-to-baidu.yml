@@ -17,10 +17,11 @@ jobs:
           PCS_VER: v3.9.7
           PCS_DIR: /tmp/pcs
           BAIDU_REMOTE_ROOT: /GitHub-Docker-Backup
+          GITHUB_WORKSPACE: ${{ github.workspace }}
         run: |
           set -euo pipefail
 
-          # 安装依赖，加sudo，只装unzip，系统自带docker
+          # 安装依赖
           sudo apt-get update
           sudo apt-get install -y unzip
 
@@ -33,9 +34,8 @@ jobs:
           cd BaiduPCS-Go-${PCS_VER}-linux-amd64
           chmod +x BaiduPCS-Go
           sudo mv BaiduPCS-Go /usr/local/bin/
-          cd -
 
-          # 登录百度网盘
+          # 登录网盘
           if [ -n "${BAIDU_STOKEN}" ];then
             BaiduPCS-Go login -bduss "${BAIDU_BDUSS}" -stoken "${BAIDU_STOKEN}"
           else
@@ -43,7 +43,8 @@ jobs:
           fi
           BaiduPCS-Go mkdir ${BAIDU_REMOTE_ROOT} || true
 
-          # 读取images.txt，过滤注释、空行
+          # ========== 重点：回到仓库目录，读取images.txt ==========
+          cd ${GITHUB_WORKSPACE}
           IMAGE_LIST=$(grep -v '^#' images.txt | sed '/^\s*$/d')
           FAILED=0
 
