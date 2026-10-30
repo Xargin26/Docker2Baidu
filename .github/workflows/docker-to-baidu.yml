@@ -1,182 +1,74 @@
-# =============================================================================
-# GitHub Action: 读取项目根目录 images.txt 中的镜像列表 -> 逐个 docker pull
-#                -> docker save 打包 gzip -> 上传到百度网盘
-#
-# images.txt 格式示例 (仓库根目录):
-#   # 这是注释，空行会被跳过
-#   nginx:alpine
-#   redis:7-alpine
-#   ghcr.io/yourname/yourapp:v1.2.3
-#
-# 触发方式: 仓库 Actions 页面手动 Run workflow (workflow_dispatch)
-#
-# 需要在仓库 Settings -> Secrets and variables -> Actions 中配置:
-#   BAIDU_BDUSS   (必填)  百度账号的 BDUSS Cookie
-#   BAIDU_STOKEN  (可选)  开启了二次验证时需要，普通账号可留空
-#
-# 获取 BDUSS 方法:
-#   1. 浏览器登录 https://pan.baidu.com
-#   2. F12 -> Application/应用 -> Cookies -> https://pan.baidu.com
-#   3. 复制 BDUSS 的 Value（一长串字符），粘贴到上面的 Secret
-#   注意: BDUSS 相当于账号凭证，切勿外泄、切勿提交到仓库
-# =============================================================================
-
-name: Pull Docker Images -> Baidu Netdisk
-
+name: Docker镜像备份到百度网盘
 on:
   workflow_dispatch:
-    inputs:
-      remote_dir:
-        description: "百度网盘中的目标目录 (绝对路径，不存在会自动创建)"
-        required: true
-        default: "/GitHub-Docker-Backup"
-      registry_user:
-        description: "私有仓库账号 (公开镜像留空)"
-        required: false
-        default: ""
-      registry_password:
-        description: "私有仓库密码 / Token (公开镜像留空)"
-        required: false
-        default: ""
-
-# 同一时间只允许跑一个任务，避免重复上传互相覆盖
-concurrency:
-  group: docker-baidu-backup
-  cancel-in-progress: false
 
 jobs:
-  push-to-baidu:
+  backup:
     runs-on: ubuntu-latest
-    timeout-minutes: 240   # 多个镜像上传较慢，给足 4 小时
+    timeout-minutes: 120
     steps:
-      # ------------------------------------------------------------------
-      # 0. 拉取仓库代码，为了读 images.txt
-      # ------------------------------------------------------------------
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      # ------------------------------------------------------------------
-      # 1. 校验 images.txt 并把镜像列表导出到环境文件
-      # ------------------------------------------------------------------
-      - name: Parse images.txt
-        id: images
-        run: |
-          set -euo pipefail
-          if [ ! -f images.txt ]; then
-            echo "::error::仓库根目录缺少 images.txt"
-            exit 1
-          fi
-          # 去掉注释行(#开头)、空行、首尾空白
-          mapfile -t IMAGES < <(grep -vE '^\s*(#|$)' images.txt | sed 's/^\s*//;s/\s*$//')
-          if [ "${#IMAGES[@]}" -eq 0 ]; then
-            echo "::error::images.txt 中没有有效镜像"
-            exit 1
-          fi
-          echo "==> 待处理镜像列表 (${#IMAGES[@]} 个):"
-          printf '    %s\n' "${IMAGES[@]}"
-          # 写入 GITHUB_ENV，后续步骤可用 $IMAGES
-          {
-            echo "IMAGES<<__IMAGES_EOF__"
-            printf '%s\n' "${IMAGES[@]}"
-            echo "__IMAGES_EOF__"
-          } >> "$GITHUB_ENV"
-
-      # ------------------------------------------------------------------
-      # 2. 登录私有仓库（如配置了）
-      # ------------------------------------------------------------------
-      - name: Login to container registry (if needed)
-        if: ${{ inputs.registry_user != '' }}
-        run: echo "${{ inputs.registry_password }}" | docker login -u "${{ inputs.registry_user }}" --password-stdin
-
-      # ------------------------------------------------------------------
-      # 3. 安装 BaiduPCS-Go (qjfoidnh 维护分支)
-      # ------------------------------------------------------------------
-      - name: Install BaiduPCS-Go
-        run: |
-          set -euo pipefail
-          # 版本号如有更新，改这里即可
-          PCS_VER="v3.9.7"
-          PCS_PKG="BaiduPCS-Go-${PCS_VER}-linux-amd64.zip"
-          echo "==> Downloading $PCS_PKG"
-          curl -fsSL -o /tmp/$PCS_PKG \
-            "https://github.com/qjfoidnh/BaiduPCS-Go/releases/download/${PCS_VER}/${PCS_PKG}"
-          sudo apt-get install -y unzip >/dev/null
-          unzip -o /tmp/$PCS_PKG -d /tmp/pcs >/dev/null
-          sudo mv /tmp/pcs/BaiduPCS-Go /usr/local/bin/BaiduPCS-Go
-          sudo chmod +x /usr/local/bin/BaiduPCS-Go
-          BaiduPCS-Go --version
-
-      # ------------------------------------------------------------------
-      # 4. 使用 BDUSS 非交互登录
-      # ------------------------------------------------------------------
-      - name: Login to Baidu Netdisk
+      - name: 读取images.txt并备份镜像
         env:
           BAIDU_BDUSS: ${{ secrets.BAIDU_BDUSS }}
           BAIDU_STOKEN: ${{ secrets.BAIDU_STOKEN }}
+          PCS_VER: v3.9.7
+          PCS_DIR: /tmp/pcs
+          BAIDU_REMOTE_ROOT: /GitHub-Docker-Backup
         run: |
           set -euo pipefail
-          mkdir -p "$HOME/.config/BaiduPCS-Go"
 
-          if [ -z "$BAIDU_BDUSS" ]; then
-            echo "::error::未配置 Secret BAIDU_BDUSS"
-            exit 1
-          fi
+          # 安装依赖
+          apt-get update
+          apt-get install -y unzip docker.io
 
-          echo "==> Logging in via BDUSS ..."
-          if [ -n "$BAIDU_STOKEN" ]; then
-            BaiduPCS-Go login -bduss="$BAIDU_BDUSS" -stoken="$BAIDU_STOKEN"
+          # 下载BaiduPCS-Go
+          mkdir -p ${PCS_DIR}
+          cd ${PCS_DIR}
+          echo "==> Downloading BaiduPCS-Go-${PCS_VER}-linux-amd64.zip"
+          wget -q https://github.com/qjfoidnh/BaiduPCS-Go/releases/download/${PCS_VER}/BaiduPCS-Go-${PCS_VER}-linux-amd64.zip
+          unzip -q BaiduPCS-Go-${PCS_VER}-linux-amd64.zip
+          # 重点：解压后有一层版本目录
+          cd BaiduPCS-Go-${PCS_VER}-linux-amd64
+          chmod +x BaiduPCS-Go
+          # 放到PATH可直接调用
+          mv BaiduPCS-Go /usr/local/bin/
+          cd -
+
+          # 登录百度网盘
+          if [ -n "${BAIDU_STOKEN}" ];then
+            BaiduPCS-Go login -bduss "${BAIDU_BDUSS}" -stoken "${BAIDU_STOKEN}"
           else
-            BaiduPCS-Go login -bduss="$BAIDU_BDUSS"
+            BaiduPCS-Go login -bduss "${BAIDU_BDUSS}"
           fi
-          BaiduPCS-Go loglist
+          BaiduPCS-Go mkdir ${BAIDU_REMOTE_ROOT} || true
 
-      # ------------------------------------------------------------------
-      # 5. 循环: 拉取 -> 打包 -> 上传每个镜像
-      # ------------------------------------------------------------------
-      - name: Pull, save & upload each image
-        env:
-          REMOTE_DIR: ${{ inputs.remote_dir }}
-        run: |
-          set -euo pipefail
-          BaiduPCS-Go set max_upload_parallel 8 || true
+          # 读取images.txt，过滤注释、空行
+          IMAGE_LIST=$(grep -v '^#' images.txt | sed '/^\s*$/d')
+          FAILED=0
 
-          echo "==> Ensuring remote dir exists: $REMOTE_DIR"
-          BaiduPCS-Go mkdir -p "$REMOTE_DIR" || true
+          while IFS= read -r img; do
+            echo "====================================="
+            echo "开始处理镜像：$img"
+            SAFE_NAME=$(echo "$img" | tr '/:' '_')
+            TMP_FILE="${SAFE_NAME}.tar.gz"
 
-          FAIL_COUNT=0
-          # $IMAGES 是 GITHUB_ENV 注入的多行变量，按行遍历
-          while IFS= read -r IMAGE; do
-            [ -z "$IMAGE" ] && continue
-            echo "============================================================"
-            echo "==> 处理镜像: $IMAGE"
-            echo "============================================================"
-
-            FILE_NAME="$(echo "$IMAGE" | sed 's#[:/]#_#g').tar.gz"
-
-            if ! docker pull "$IMAGE"; then
-              echo "::warning::拉取失败: $IMAGE"
-              FAIL_COUNT=$((FAIL_COUNT+1))
-              continue
+            if docker pull "$img"; then
+              docker save "$img" | gzip > "$TMP_FILE"
+              echo "打包完成，开始上传 $TMP_FILE"
+              BaiduPCS-Go upload "$TMP_FILE" ${BAIDU_REMOTE_ROOT}/
+              rm -f "$TMP_FILE"
+              docker rmi "$img" || true
+              echo "$img 上传成功"
+            else
+              echo "⚠️ 镜像 $img 拉取失败，跳过"
+              FAILED=$((FAILED+1))
             fi
+          done <<< "$IMAGE_LIST"
 
-            echo "==> Saving $IMAGE -> $FILE_NAME"
-            docker save "$IMAGE" | gzip -c > "$FILE_NAME"
-            ls -lh "$FILE_NAME"
-
-            echo "==> Uploading $FILE_NAME -> $REMOTE_DIR"
-            if ! BaiduPCS-Go upload "$FILE_NAME" "$REMOTE_DIR"; then
-              echo "::warning::上传失败: $IMAGE"
-              FAIL_COUNT=$((FAIL_COUNT+1))
-            fi
-
-            # 删除本地包，避免下个镜像磁盘不够
-            rm -f "$FILE_NAME"
-          done <<< "$IMAGES"
-
-          echo "==> 全部完成，失败 $FAIL_COUNT 个。网盘目录内容:"
-          BaiduPCS-Go ls "$REMOTE_DIR"
-
-          if [ "$FAIL_COUNT" -gt 0 ]; then
-            echo "::error::$FAIL_COUNT 个镜像处理失败，请查看上面日志"
+          if [ "$FAILED" -gt 0 ];then
+            echo "===== 有 ${FAILED} 个镜像处理失败 ====="
             exit 1
           fi
