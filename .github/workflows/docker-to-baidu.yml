@@ -20,9 +20,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          # 安装依赖
-          apt-get update
-          apt-get install -y unzip docker.io
+          # 安装依赖，加sudo，只装unzip，系统自带docker
+          sudo apt-get update
+          sudo apt-get install -y unzip
 
           # 下载BaiduPCS-Go
           mkdir -p ${PCS_DIR}
@@ -30,11 +30,9 @@ jobs:
           echo "==> Downloading BaiduPCS-Go-${PCS_VER}-linux-amd64.zip"
           wget -q https://github.com/qjfoidnh/BaiduPCS-Go/releases/download/${PCS_VER}/BaiduPCS-Go-${PCS_VER}-linux-amd64.zip
           unzip -q BaiduPCS-Go-${PCS_VER}-linux-amd64.zip
-          # 重点：解压后有一层版本目录
           cd BaiduPCS-Go-${PCS_VER}-linux-amd64
           chmod +x BaiduPCS-Go
-          # 放到PATH可直接调用
-          mv BaiduPCS-Go /usr/local/bin/
+          sudo mv BaiduPCS-Go /usr/local/bin/
           cd -
 
           # 登录百度网盘
